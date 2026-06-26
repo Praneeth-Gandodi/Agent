@@ -1,11 +1,12 @@
 from core.normalizer.models import (
     NormalizedEvent,
     ReasoningChunk,
+    ResponseComplete,
     StreamingTextChunk,
     ToolCall,
     ToolCallList,
 )
-from openai.types.chat import ChatCompletionChunk
+from openai.types.chat import ChatCompletionChunk, ChatCompletion
 from functools import singledispatchmethod
 from typing import Any
 
@@ -53,3 +54,41 @@ class ResponseNormalizer:
             )
             self._tool_calls.clear()
             return completed_tool_calls
+
+    @normalize.register
+    def _(self, chunk: ChatCompletion) -> NormalizedEvent | None:
+        result = ResponseComplete()
+        if chunk.usage:
+            if chunk.usage.completion_tokens:
+                result.completion_tokens = chunk.usage.completion_tokens
+            if chunk.usage.prompt_tokens:
+                result.prompt_tokens = chunk.usage.prompt_tokens
+            if chunk.usage.total_tokens:
+                result.total_tokens = chunk.usage.total_tokens
+
+        delta = chunk.choices[0]
+        if delta.finish_reason:
+            result.finish_reason = delta.finish_reason
+
+        if delta.message.content:
+            result.content = delta.message.content
+
+        reasoning = getattr(delta.message, "reasoning", None)
+        if reasoning:
+            result.reasoning_content = reasoning
+
+        if delta.message.tool_calls:
+            tool_calls = []
+
+            for tc in delta.message.tool_calls:
+                tool_calls.append(
+                    ToolCall(
+                        id=tc.id or "",
+                        name=tc.function.name if tc.function else "",  # type: ignore
+                        arguments=tc.function.arguments if tc.function else "",  # type: ignore
+                    )
+                )
+
+            result.tool_calls = ToolCallList(tool_calls=tool_calls)
+
+        return result

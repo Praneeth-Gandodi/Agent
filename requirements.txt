@@ -1,0 +1,7 @@
+openai 
+anthropic 
+rich 
+pydantic 
+python-dotenv
+git+https://github.com/Praneeth-Gandodi/markrender 
+

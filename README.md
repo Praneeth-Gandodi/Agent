@@ -30,7 +30,7 @@ core/
 └── normalizer/
     ├── models.py            # Normalized streaming event types
     └── normalizer.py        # ResponseNormalizer (partial — ChatCompletionChunk only)
-
+```
 ## Setup
 
 ### Windows

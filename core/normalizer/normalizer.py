@@ -1,19 +1,25 @@
+from functools import singledispatchmethod
+from typing import Any
+
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from openai.types.responses import Response
+
 from core.normalizer.models import (
+    FinishReason,
     NormalizedEvent,
     ReasoningChunk,
-    ResponseComplete,
+    NormalizerResponseComplete,
     StreamingTextChunk,
+    TokenUsageDetails,
     ToolCall,
     ToolCallList,
 )
-from openai.types.chat import ChatCompletionChunk, ChatCompletion
-from functools import singledispatchmethod
-from typing import Any
+from core.providers import OpenAIResponseStreamEvent
 
 
 class ResponseNormalizer:
     def __init__(self) -> None:
-        self._tool_calls: dict[int, ToolCall] = {}
+        self._tool_calls: dict[int | str, ToolCall] = {}
 
     @singledispatchmethod
     def normalize(self, chunk: Any) -> NormalizedEvent | None:
@@ -22,7 +28,25 @@ class ResponseNormalizer:
     @normalize.register
     def _(self, chunk: ChatCompletionChunk) -> NormalizedEvent | None:
         if not chunk.choices or not chunk.choices[0]:
+            if chunk.usage:
+                result = NormalizerResponseComplete()
+                result.token_details = TokenUsageDetails(
+                    completion_tokens=chunk.usage.completion_tokens,
+                    prompt_tokens=chunk.usage.prompt_tokens,
+                    total_tokens=chunk.usage.total_tokens,
+                )
+                if (
+                    chunk.usage.completion_tokens_details
+                    and chunk.usage.completion_tokens_details.reasoning_tokens
+                ):
+                    result.token_details.reasoning_tokens = (
+                        chunk.usage.completion_tokens_details.reasoning_tokens
+                    )
+                return result
             return None
+
+        if chunk.choices[0].finish_reason:
+            return FinishReason(finish_reason=chunk.choices[0].finish_reason)
 
         if chunk.choices[0].delta:
             delta = chunk.choices[0].delta
@@ -55,16 +79,41 @@ class ResponseNormalizer:
             self._tool_calls.clear()
             return completed_tool_calls
 
+        if chunk.usage:
+            result = NormalizerResponseComplete()
+            result.token_details = TokenUsageDetails(
+                completion_tokens=chunk.usage.completion_tokens,
+                prompt_tokens=chunk.usage.prompt_tokens,
+                total_tokens=chunk.usage.total_tokens,
+            )
+            if (
+                chunk.usage.completion_tokens_details
+                and chunk.usage.completion_tokens_details.reasoning_tokens
+            ):
+                result.token_details.reasoning_tokens = (
+                    chunk.usage.completion_tokens_details.reasoning_tokens
+                )
+            finish_reason = chunk.choices[0].finish_reason
+            if finish_reason:
+                result.finish_reason = finish_reason
+            return result
+
     @normalize.register
     def _(self, chunk: ChatCompletion) -> NormalizedEvent | None:
-        result = ResponseComplete()
+        result = NormalizerResponseComplete()
         if chunk.usage:
-            if chunk.usage.completion_tokens:
-                result.completion_tokens = chunk.usage.completion_tokens
-            if chunk.usage.prompt_tokens:
-                result.prompt_tokens = chunk.usage.prompt_tokens
-            if chunk.usage.total_tokens:
-                result.total_tokens = chunk.usage.total_tokens
+            result.token_details = TokenUsageDetails(
+                completion_tokens=chunk.usage.completion_tokens,
+                prompt_tokens=chunk.usage.prompt_tokens,
+                total_tokens=chunk.usage.total_tokens,
+            )
+            if (
+                chunk.usage.completion_tokens_details
+                and chunk.usage.completion_tokens_details.reasoning_tokens
+            ):
+                result.token_details.reasoning_tokens = (
+                    chunk.usage.completion_tokens_details.reasoning_tokens
+                )
 
         delta = chunk.choices[0]
         if delta.finish_reason:
@@ -90,5 +139,115 @@ class ResponseNormalizer:
                 )
 
             result.tool_calls = ToolCallList(tool_calls=tool_calls)
+
+        return result
+
+    @normalize.register
+    def _(self, chunk: OpenAIResponseStreamEvent) -> NormalizedEvent | None:
+        match chunk.type:
+            case "response.output_text.delta":
+                return StreamingTextChunk(content=chunk.delta)
+
+            case "response.reasoning_text.delta":
+                return ReasoningChunk(reasoning=chunk.delta)
+
+            case "response.reasoning_summary_text.delta":
+                return ReasoningChunk(reasoning=chunk.delta)
+
+            case "response.output_item.added":
+                item = chunk.item
+
+                if item.type == "function_call":
+                    if item.id:
+                        self._tool_calls[item.id] = ToolCall(
+                            id=item.id,
+                            call_id=item.call_id,
+                            name=item.name,
+                            arguments=item.arguments if item.arguments else "",
+                        )
+
+            case "response.function_call_arguments.delta":
+                if chunk.item_id in self._tool_calls and self._tool_calls[chunk.item_id]:
+                    self._tool_calls[chunk.item_id].arguments += chunk.delta
+
+            case "response.output_item.done":
+                if chunk.item.type == "function_call":
+                    tool_call_list: ToolCallList = ToolCallList(
+                        tool_calls=list(self._tool_calls.values())
+                    )
+                    self._tool_calls.clear()
+                    return tool_call_list
+            case "response.completed":
+                result = NormalizerResponseComplete()
+                if chunk.response.output_text:
+                    result.content = chunk.response.output_text
+                for event in chunk.response.output:
+                    if event.type == "reasoning":
+                        result.reasoning_summary = event.summary
+                        if event.content:
+                            result.reasoning_content = event.content[0].text
+
+                    if event.type == "function_call":
+                        if result.tool_calls is None:
+                            result.tool_calls = ToolCallList()
+                        result.tool_calls.tool_calls.append(
+                            ToolCall(
+                                id=event.id if event.id else " ",
+                                call_id=event.call_id,
+                                name=event.name,
+                                arguments=event.arguments,
+                            )
+                        )
+
+                if chunk.response.usage:
+                    result.token_details = TokenUsageDetails()
+                    if chunk.response.usage.total_tokens:
+                        result.token_details.total_tokens = (
+                            chunk.response.usage.total_tokens
+                        )
+                    if chunk.response.usage.output_tokens_details:
+                        result.token_details.reasoning_tokens = (
+                            chunk.response.usage.output_tokens_details.reasoning_tokens
+                        )
+                    if chunk.response.usage.input_tokens:
+                        result.token_details.input_tokens = (
+                            chunk.response.usage.input_tokens
+                        )
+
+                return result
+
+    @normalize.register
+    def _(self, chunk: Response) -> NormalizedEvent | None:
+        result = NormalizerResponseComplete()
+        if chunk.output_text:
+            result.content = chunk.output_text
+        for event in chunk.output:
+            if event.type == "reasoning":
+                result.reasoning_summary = event.summary
+                if event.content:
+                    result.reasoning_content = event.content[0].text
+
+            if event.type == "function_call":
+                if result.tool_calls is None:
+                    result.tool_calls = ToolCallList()
+                result.tool_calls.tool_calls.append(
+                    ToolCall(
+                        id=event.id if event.id else " ",
+                        call_id=event.call_id,
+                        name=event.name,
+                        arguments=event.arguments,
+                    )
+                )
+
+        if chunk.usage:
+            result.token_details = TokenUsageDetails()
+            if chunk.usage.total_tokens:
+                result.token_details.total_tokens = chunk.usage.total_tokens
+            if chunk.usage.output_tokens_details:
+                result.token_details.reasoning_tokens = (
+                    chunk.usage.output_tokens_details.reasoning_tokens
+                )
+            if chunk.usage.input_tokens:
+                result.token_details.input_tokens = chunk.usage.input_tokens
 
         return result

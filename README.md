@@ -2,19 +2,49 @@
 
 Multi-provider AI agent framework with normalized streaming, tool calling, and reasoning support.
 
-## Status
+## Implementation Status
 
-| Module                 | Status         | Notes                                                                                   |
-| ---------------------- | -------------- | --------------------------------------------------------------------------------------- |
-| `BaseProvider`         | ✅ Done        | Abstract interface                                                                      |
-| `ChatCompletions`      | ✅ Done        | `client.chat.completions.create()`                                                      |
-| `Responses API`        | 🔄 In progress | Stub only                                                                               |
-| `Messages API`         | ❌ Not started | Placeholder only                                                                        |
-| `Normalizer`           | 🔄 Partial     | Only handles `ChatCompletionChunk` — needs `ResponseStreamEvent` + `MessageStreamEvent` |
-| `Capability Registry`  | ❌ Not started | Track which models support vision, audio, tools, etc.                                   |
-| `Conversation Manager` | ❌ Not started | History, context window, token counting                                                 |
-| `Tool Executor`        | ❌ Not started | Run function calls, inject results                                                      |
-| `Audio I/O`            | ❌ Not started | STT + TTS                                                                               |
+### Layer 1: Providers
+
+```
+[x] ChatCompletion Provider      — core/providers/chatcompletion.py
+[x] ResponseAPI Provider         — core/providers/response.py (streaming normalizer pending)
+[ ] Messages API Provider        — core/providers/messages.py (placeholder only)
+```
+
+### Layer 2: Normalizers
+
+```
+[x] Normalizer for ChatCompletion   — core/normalizer/normalizer.py (handles ChatCompletionChunk + ChatCompletion)
+[ ] Normalizer for ResponseAPI      — ResponseStreamNormalizer (match on event.type for 53 event types)
+[ ] Normalizer for Messages API     — MessageStreamNormalizer
+```
+
+### Layer 3: Adapter
+
+```
+[ ] Input Adapter — Accept text / files / images, detect modality support, route to appropriate provider
+[ ] Vision detection — Check capability registry if model supports vision
+```
+
+### Layer 4: Tool Calling
+
+```
+[ ] Tool Executor — Run function calls, inject results back
+[ ] MCP Client — Model Context Protocol client for external tool servers
+```
+
+### Layer 5: User Interface
+
+```
+[ ] TUI — Built with OpenTUI (JS framework)
+[ ] WebUI — Browser-based interface
+[ ] Voice Interaction Layer:
+      [ ] Reactive ring animation — Waveform/orb animation for listening/speaking state
+      [ ] TTS — Text-to-speech output
+      [ ] STT — Speech-to-text input
+      [ ] OpenWakeWord — Wake word detection ("Hey Agent")
+```
 
 ## Project Structure
 
@@ -31,6 +61,7 @@ core/
     ├── models.py            # Normalized streaming event types
     └── normalizer.py        # ResponseNormalizer (partial — ChatCompletionChunk only)
 ```
+
 ## Setup
 
 ### Windows

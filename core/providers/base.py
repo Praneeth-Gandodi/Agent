@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
-from core.providers.models import ChatParams, ChatResponse, ChatStreamingResponse
 from typing import Any, Dict
+
+from core.providers.models import ChatParams, ChatResponse, ChatStreamingResponse
 
 
 class BaseProvider(ABC):

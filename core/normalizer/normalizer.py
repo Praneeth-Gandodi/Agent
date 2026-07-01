@@ -3,6 +3,7 @@ from typing import Any
 
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from openai.types.responses import Response
+from anthropic.types import Message, RawMessageStreamEvent
 
 from core.normalizer.models import (
     FinishReason,
@@ -23,7 +24,7 @@ class ResponseNormalizer:
 
     @singledispatchmethod
     def normalize(self, chunk: Any) -> NormalizedEvent | None:
-        raise TypeError(f"No normalizer {type(chunk)}")
+        raise TypeError(f"No normalizer for the type {type(chunk)}")
 
     @normalize.register
     def _(self, chunk: ChatCompletionChunk) -> NormalizedEvent | None:
@@ -44,9 +45,6 @@ class ResponseNormalizer:
                     )
                 return result
             return None
-
-        if chunk.choices[0].finish_reason:
-            return FinishReason(finish_reason=chunk.choices[0].finish_reason)
 
         if chunk.choices[0].delta:
             delta = chunk.choices[0].delta
@@ -97,6 +95,9 @@ class ResponseNormalizer:
             if finish_reason:
                 result.finish_reason = finish_reason
             return result
+
+        if chunk.choices[0].finish_reason:
+            return FinishReason(finish_reason=chunk.choices[0].finish_reason)
 
     @normalize.register
     def _(self, chunk: ChatCompletion) -> NormalizedEvent | None:
@@ -167,16 +168,15 @@ class ResponseNormalizer:
                         )
 
             case "response.function_call_arguments.delta":
-                if chunk.item_id in self._tool_calls and self._tool_calls[chunk.item_id]:
+                if (
+                    chunk.item_id in self._tool_calls
+                    and self._tool_calls[chunk.item_id]
+                ):
                     self._tool_calls[chunk.item_id].arguments += chunk.delta
 
             case "response.output_item.done":
-                if chunk.item.type == "function_call":
-                    tool_call_list: ToolCallList = ToolCallList(
-                        tool_calls=list(self._tool_calls.values())
-                    )
-                    self._tool_calls.clear()
-                    return tool_call_list
+                if chunk.item.type == "function_call" and chunk.item.id in self._tool_calls:
+                    return ToolCallList(tool_calls=[self._tool_calls.pop(chunk.item.id)])
             case "response.completed":
                 result = NormalizerResponseComplete()
                 if chunk.response.output_text:
@@ -192,7 +192,7 @@ class ResponseNormalizer:
                             result.tool_calls = ToolCallList()
                         result.tool_calls.tool_calls.append(
                             ToolCall(
-                                id=event.id if event.id else " ",
+                                id=event.id if event.id else "",
                                 call_id=event.call_id,
                                 name=event.name,
                                 arguments=event.arguments,
@@ -232,7 +232,7 @@ class ResponseNormalizer:
                     result.tool_calls = ToolCallList()
                 result.tool_calls.tool_calls.append(
                     ToolCall(
-                        id=event.id if event.id else " ",
+                        id=event.id if event.id else "",
                         call_id=event.call_id,
                         name=event.name,
                         arguments=event.arguments,
@@ -249,5 +249,80 @@ class ResponseNormalizer:
                 )
             if chunk.usage.input_tokens:
                 result.token_details.input_tokens = chunk.usage.input_tokens
+
+        return result
+
+    @normalize.register
+    def _(self, chunk: RawMessageStreamEvent) -> NormalizedEvent | None:
+        match chunk.type:
+            case "content_block_start":
+                if chunk.content_block.type == "tool_use":
+                    self._tool_calls[chunk.index] = ToolCall(
+                        id=chunk.content_block.id,
+                        name=chunk.content_block.name,
+                        arguments="",
+                    )
+                return None
+
+            case "content_block_delta":
+                if chunk.delta.type == "thinking_delta":
+                    return ReasoningChunk(reasoning=chunk.delta.thinking)
+                if chunk.delta.type == "text_delta":
+                    return StreamingTextChunk(content=chunk.delta.text)
+                if chunk.delta.type == "input_json_delta":
+                    if chunk.index in self._tool_calls:
+                        self._tool_calls[
+                            chunk.index
+                        ].arguments += chunk.delta.partial_json
+                return None
+
+            case "content_block_stop":
+                if chunk.index in self._tool_calls:
+                    return self._tool_calls.pop(chunk.index)
+                return None
+
+            case "message_delta":
+                result = NormalizerResponseComplete()
+                if chunk.delta.stop_reason:
+                    result.finish_reason = chunk.delta.stop_reason
+                if chunk.usage:
+                    result.token_details = TokenUsageDetails(
+                        completion_tokens=chunk.usage.output_tokens,
+                    )
+
+                return result
+
+            case "message_start" | "message_stop":
+                return None
+
+    @normalize.register
+    def _(self, chunk: Message) -> NormalizedEvent | None:
+        result = NormalizerResponseComplete()
+
+        if chunk.usage:
+            result.token_details = TokenUsageDetails()
+            result.token_details.input_tokens = chunk.usage.input_tokens
+            result.token_details.completion_tokens = chunk.usage.output_tokens
+
+        if chunk.stop_reason:
+            result.finish_reason = chunk.stop_reason
+
+        for event in chunk.content:
+            if event.type == "thinking":
+                result.reasoning_content = event.thinking
+
+            if event.type == "text":
+                result.content = event.text
+
+            if event.type == "tool_use":
+                self._tool_calls[event.id] = ToolCall(
+                    id=event.id,
+                    name=event.name,
+                    arguments=str(event.input) if event.input else "",
+                )
+
+        if self._tool_calls:
+            result.tool_calls = ToolCallList(tool_calls=list(self._tool_calls.values()))
+            self._tool_calls.clear()
 
         return result

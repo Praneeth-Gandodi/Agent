@@ -1,5 +1,6 @@
 from core.providers.chatcompletion import OpenAIChatCompletion
 from core.providers.response import OpenAIResponseAPI
+from core.providers.messages import AnthropicMessages
 from core.providers.models import (
     ChatParams,
     OpenAIResponseStreamEvent,
@@ -14,4 +15,5 @@ __all__ = [
     "ChatStreamingResponse",
     "OpenAIChatCompletion",
     "OpenAIResponseAPI",
+    "AnthropicMessages",
 ]

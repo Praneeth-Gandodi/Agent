@@ -3,7 +3,7 @@ from typing import Any, AsyncIterator, Iterable, Optional, Union
 from anthropic.types import (
     Message,
     MessageParam,
-    MessageStreamEvent,
+    RawMessageStreamEvent,
     ThinkingConfigParam,
     ToolChoiceParam,
 )
@@ -50,6 +50,7 @@ class ChatParams(BaseModel):
     max_tool_calls: int | None = None
     parallel_tool_calls: bool = True
     store: bool = False
+    output_config: dict[str, Any] | None = None
 
 
 OpenAIResponseStreamEvent = Union[
@@ -65,5 +66,5 @@ OpenAIResponseStreamEvent = Union[
 ChatResponse = Union[ChatCompletion, Response, Message]
 
 ChatStreamingResponse = AsyncIterator[
-    Union[ChatCompletionChunk, ResponseStreamEvent, MessageStreamEvent]
+    Union[ChatCompletionChunk, ResponseStreamEvent, RawMessageStreamEvent]
 ]

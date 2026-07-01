@@ -8,16 +8,16 @@ Multi-provider AI agent framework with normalized streaming, tool calling, and r
 
 ```
 [x] ChatCompletion Provider      — core/providers/chatcompletion.py
-[x] ResponseAPI Provider         — core/providers/response.py (streaming normalizer pending)
-[ ] Messages API Provider        — core/providers/messages.py (placeholder only)
+[x] ResponseAPI Provider         — core/providers/response.py
+[x] Messages API Provider        — core/providers/messages.py
 ```
 
 ### Layer 2: Normalizers
 
 ```
 [x] Normalizer for ChatCompletion   — core/normalizer/normalizer.py (handles ChatCompletionChunk + ChatCompletion)
-[ ] Normalizer for ResponseAPI      — ResponseStreamNormalizer (match on event.type for 53 event types)
-[ ] Normalizer for Messages API     — MessageStreamNormalizer
+[x] Normalizer for ResponseAPI      — core/normalizer/normalizer.py (handles OpenAIResponseStreamEvent + Response)
+[x] Normalizer for Messages API     — core/normalizer/normalizer.py (handles RawMessageStreamEvent + Message)
 ```
 
 ### Layer 3: Adapter
@@ -54,12 +54,12 @@ core/
 ├── providers/
 │   ├── base.py              # Abstract BaseProvider
 │   ├── chatcompletion.py    # OpenAIChatCompletion (done)
-│   ├── messages.py          # Anthropic Messages API (placeholder)
-│   ├── response.py          # OpenAI Responses API (stub)
+│   ├── messages.py          # Anthropic Messages API
+│   ├── response.py          # OpenAI Responses API
 │   └── models.py            # Shared Pydantic models & type aliases
 └── normalizer/
     ├── models.py            # Normalized streaming event types
-    └── normalizer.py        # ResponseNormalizer (partial — ChatCompletionChunk only)
+    └── normalizer.py        # ResponseNormalizer (ChatCompletion, Response API, Anthropic Messages)
 ```
 
 ## Setup
